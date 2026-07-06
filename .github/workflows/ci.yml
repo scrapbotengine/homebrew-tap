@@ -18,16 +18,16 @@ jobs:
       - name: Tap repository
         run: brew tap scrapbotengine/tap "$PWD"
 
-      - name: Audit casks
+      - name: Audit formulae
         run: |
           set -euo pipefail
 
-          casks=(Casks/*.rb)
-          if [ ! -e "${casks[0]}" ]; then
-            echo "No casks to audit yet."
+          formulae=(Formula/*.rb)
+          if [ ! -e "${formulae[0]}" ]; then
+            echo "No formulae to audit yet."
             exit 0
           fi
 
-          for cask in "${casks[@]}"; do
-            brew audit --cask "$cask"
+          for formula in "${formulae[@]}"; do
+            brew audit --formula "$formula"
           done
