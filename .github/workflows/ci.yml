@@ -29,5 +29,6 @@ jobs:
           fi
 
           for formula in "${formulae[@]}"; do
-            brew audit --formula "$formula"
+            formula_name="$(basename "${formula%.rb}")"
+            brew audit --formula "scrapbotengine/tap/${formula_name}"
           done
