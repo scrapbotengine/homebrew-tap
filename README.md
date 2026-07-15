@@ -23,3 +23,5 @@ For a local formula file:
 ```sh
 brew audit --formula ./Formula/scrapbot.rb
 ```
+
+`Publish Scrapbot` checks the latest GitHub release every hour and updates the formula once both macOS archives are available. It can also be run manually for a specific tag. Publishing uses only this repository's `GITHUB_TOKEN`; no cross-repository personal access token is required.

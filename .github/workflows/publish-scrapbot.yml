@@ -1,0 +1,103 @@
+name: Publish Scrapbot
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish; defaults to the latest release
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-scrapbot
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve complete release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          tag="$REQUESTED_TAG"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --repo scrapbotengine/scrapbot --json tagName --jq .tagName)"
+          fi
+          version="${tag#v}"
+
+          assets="$(gh release view "$tag" --repo scrapbotengine/scrapbot --json assets --jq '.assets[].name')"
+          for arch in arm64 x86_64; do
+            name="scrapbot-${version}-macos-${arch}.tar.gz"
+            if ! grep -Fxq "$name" <<<"$assets"; then
+              echo "Release $tag is waiting for $name; a later scheduled run will retry."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download release archives
+        if: steps.release.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in arm64 x86_64; do
+            gh release download "$TAG" \
+              --repo scrapbotengine/scrapbot \
+              --pattern "scrapbot-${VERSION}-macos-${arch}.tar.gz" \
+              --dir dist
+          done
+
+      - name: Update formula
+        if: steps.release.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          arm64_sha="$(shasum -a 256 "dist/scrapbot-${VERSION}-macos-arm64.tar.gz" | awk '{print $1}')"
+          x86_64_sha="$(shasum -a 256 "dist/scrapbot-${VERSION}-macos-x86_64.tar.gz" | awk '{print $1}')"
+          ruby scripts/update_scrapbot_formula.rb Formula/scrapbot.rb "$VERSION" "$arm64_sha" "$x86_64_sha"
+
+      - name: Audit formula
+        if: steps.release.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          ruby -c scripts/update_scrapbot_formula.rb
+          brew tap scrapbotengine/tap "$PWD"
+          brew audit --formula scrapbotengine/tap/scrapbot
+
+      - name: Commit formula update
+        if: steps.release.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Formula/scrapbot.rb; then
+            echo "Formula already publishes Scrapbot $VERSION."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/scrapbot.rb
+          git commit -m "chore: publish scrapbot $VERSION"
+          git push
